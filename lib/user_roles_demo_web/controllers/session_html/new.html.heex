@@ -1,0 +1,12 @@
+<Layouts.app flash={@flash}>
+  <.header>Iniciar sesión</.header>
+
+  <.form for={%{}} as={:user} action={~p"/login"}>
+    <.input name="email" type="email" label="Email" value="" required />
+    <.input name="password" type="password" label="Contraseña" value="" required />
+    <footer>
+      <.button phx-disable-with="Entrando..." variant="primary">Entrar</.button>
+      <.link navigate={~p"/users/reset-password"}>¿Olvidaste tu contraseña?</.link>
+    </footer>
+  </.form>
+</Layouts.app>

@@ -1,0 +1,25 @@
+<Layouts.app flash={@flash}>
+  <.header>
+    Usuarios
+    <:actions>
+      <.button variant="primary" navigate={~p"/users/new"}>
+        <.icon name="hero-plus" /> Nuevo usuario
+      </.button>
+    </:actions>
+  </.header>
+
+  <.table id="users" rows={@streams.users}>
+    <:col :let={{_id, user}} label="Nombre">{user.name}</:col>
+    <:col :let={{_id, user}} label="Email">{user.email}</:col>
+    <:col :let={{_id, user}} label="Activo">{if user.is_active, do: "Sí", else: "No"}</:col>
+    <:col :let={{_id, user}} label="Roles">
+      {Enum.map_join(user.roles, ", ", & &1.name)}
+    </:col>
+    <:action :let={{_id, user}}>
+      <.link navigate={~p"/users/#{user}"}>Ver</.link>
+    </:action>
+    <:action :let={{_id, user}}>
+      <.link navigate={~p"/users/#{user}/edit"}>Edit</.link>
+    </:action>
+  </.table>
+</Layouts.app>

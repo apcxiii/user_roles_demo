@@ -1,0 +1,14 @@
+<Layouts.app flash={@flash}>
+  <.header>
+    ¿Olvidaste tu contraseña?
+    <:subtitle>Te enviamos un link para restablecerla.</:subtitle>
+  </.header>
+
+  <.form for={%{}} as={:user} action={~p"/users/reset-password"}>
+    <.input name="email" type="email" label="Email" value="" required />
+    <footer>
+      <.button phx-disable-with="Enviando..." variant="primary">Enviar instrucciones</.button>
+      <.link navigate={~p"/login"}>Volver a iniciar sesión</.link>
+    </footer>
+  </.form>
+</Layouts.app>

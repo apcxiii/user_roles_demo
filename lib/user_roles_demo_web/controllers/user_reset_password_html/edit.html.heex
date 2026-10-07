@@ -1,0 +1,16 @@
+<Layouts.app flash={@flash}>
+  <.header>Elegí una nueva contraseña</.header>
+
+  <.form
+    for={@form}
+    id="reset-password-form"
+    action={~p"/users/reset-password/#{@token}"}
+    method="put"
+  >
+    <.input field={@form[:password]} type="password" label="Nueva contraseña" required />
+    <footer>
+      <.button phx-disable-with="Guardando..." variant="primary">Restablecer contraseña</.button>
+      <.link navigate={~p"/login"}>Cancelar</.link>
+    </footer>
+  </.form>
+</Layouts.app>

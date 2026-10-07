@@ -1,0 +1,21 @@
+<Layouts.app flash={@flash}>
+  <.header>
+    Usuario {@user.id}
+    <:subtitle>Este es un registro de usuario de tu base de datos.</:subtitle>
+    <:actions>
+      <.button navigate={~p"/users"}>
+        <.icon name="hero-arrow-left" />
+      </.button>
+      <.button variant="primary" navigate={~p"/users/#{@user}/edit"}>
+        <.icon name="hero-pencil-square" /> Editar usuario
+      </.button>
+    </:actions>
+  </.header>
+
+  <.list>
+    <:item title="Nombre">{@user.name}</:item>
+    <:item title="Email">{@user.email}</:item>
+    <:item title="Activo">{if @user.is_active, do: "Sí", else: "No"}</:item>
+    <:item title="Roles">{Enum.map_join(@user.roles, ", ", & &1.name)}</:item>
+  </.list>
+</Layouts.app>

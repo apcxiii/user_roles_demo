@@ -1,0 +1,34 @@
+<Layouts.app flash={@flash}>
+  <.header>
+    {@page_title}
+    <:subtitle>Use this form to manage user records in your database.</:subtitle>
+  </.header>
+
+  <.form for={@form} id="user-form" phx-change="validate" phx-submit="save">
+    <.input field={@form[:name]} type="text" label="Name" />
+    <.input field={@form[:email]} type="email" label="Email" />
+    <.input
+      field={@form[:password]}
+      type="password"
+      label={
+        if @live_action == :new,
+          do: "Password",
+          else: "New password (leave blank to keep current)"
+      }
+    />
+    <.input field={@form[:is_active]} type="checkbox" label="Activo" />
+    <.input
+      type="select"
+      id="user-role-ids"
+      name="role_ids[]"
+      label="Roles"
+      multiple
+      value={@selected_role_ids}
+      options={Enum.map(@roles, &{&1.name, &1.id})}
+    />
+    <footer>
+      <.button phx-disable-with="Saving..." variant="primary">Save User</.button>
+      <.button navigate={~p"/users"}>Cancel</.button>
+    </footer>
+  </.form>
+</Layouts.app>
