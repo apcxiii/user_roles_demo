@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: postgres:16
+        ports: ["5432:5432"]
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: user_roles_demo_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MIX_ENV: test
+      DATABASE_URL: ecto://postgres:postgres@localhost/user_roles_demo_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Lee las versiones directo de .tool-versions -> mismo par que usas local con asdf
+      - uses: erlef/setup-beam@v1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+
+      - name: Restaurar caché de deps y build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - name: Instalar dependencias
+        run: mix deps.get
+
+      - name: Compilar sin warnings
+        run: mix compile --warnings-as-errors
+
+      - name: Verificar formato
+        run: mix format --check-formatted
+
+      - name: Crear y migrar la base de datos de test
+        run: mix ecto.create --quiet && mix ecto.migrate --quiet
+
+      - name: Ejecutar tests
+        run: mix test
