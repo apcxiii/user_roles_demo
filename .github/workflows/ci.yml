@@ -63,3 +63,28 @@ jobs:
 
       - name: Ejecutar tests
         run: mix test
+
+  # CD local: corre en el self-hosted runner de tu Mac (ver deploy/local/ y la
+  # sección 11 de la guía). Solo en push a main y solo si `test` pasó.
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, ARM64, user-roles-local]
+    # un deploy a la vez; si llega otro push, espera en vez de cancelar
+    concurrency:
+      group: deploy-local
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # el runner no carga tu shell (.zshrc): agrega a mano asdf y Homebrew
+      - name: Herramientas en PATH
+        run: |
+          echo "$HOME/.asdf/shims" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+
+      - name: Desplegar release
+        run: deploy/local/deploy.sh
+        env:
+          RELEASE_SHA: ${{ github.sha }}

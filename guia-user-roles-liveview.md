@@ -7,7 +7,7 @@
 - CRUD de **Roles** (crear, editar, eliminar) con **borrado lógico**: una columna `active` (boolean) en lugar de `DELETE` físico.
 - Listado principal de **Usuarios** con **Phoenix.PubSub**: cuando alguien crea/edita/elimina un usuario en una pestaña, todas las demás pestañas conectadas se actualizan en vivo.
 - **Autenticación con password + token firmado**: login web por sesión y el mismo token reutilizable como `Authorization: Bearer` si más adelante expones una API JSON.
-- Repo en GitHub + pipeline de **CI** (tests con Postgres en GitHub Actions) y, opcionalmente, **CD** (deploy automático a Fly.io tras pasar CI).
+- Repo en GitHub + pipeline de **CI** (tests con Postgres en GitHub Actions) y, opcionalmente, **CD** (deploy automático en tu propia Mac, con un self-hosted runner y `mix release`, tras pasar CI).
 
 ---
 
@@ -2131,76 +2131,156 @@ Ve a la pestaña **Actions** del repo en GitHub para ver el workflow correr. Si 
 
 ---
 
-## 11. Despliegue continuo (CD) — opcional
+## 11. Despliegue continuo (CD) local — opcional
 
-Ejemplo con **Fly.io** (gratis para proyectos pequeños, soporta Postgres administrado y es el camino más simple para Phoenix). Si usas otro proveedor (Gigalixir, Render, un VPS con Docker) el CI de arriba no cambia — solo cambia este job.
+En lugar de un proveedor en la nube, el deploy corre **en tu propia Mac**: un *self-hosted runner* de GitHub Actions toma el job `deploy`, compila un `mix release`, corre las migraciones y reinicia la app con `launchd`. No hace falta Docker.
 
-### 11.1 Preparar el proyecto para Fly
+```
+push a main ──► job test (ubuntu, GitHub) ──► job deploy (tu Mac, self-hosted)
+                                                 │
+                                                 ├─ mix release → ~/apps/user_roles_demo/releases/<sha>
+                                                 ├─ bin/migrate
+                                                 ├─ current → releases/<sha>
+                                                 └─ launchctl kickstart (reinicia la app)
+```
+
+Archivos involucrados:
+
+| Archivo | Para qué |
+|---|---|
+| `lib/user_roles_demo/release.ex`, `rel/overlays/bin/{server,migrate}` | Generados por `mix phx.gen.release`: arrancar el server y migrar desde el release (sin `mix`) |
+| `deploy/local/install.sh` | Preparación única: secretos, base de datos de prod y servicio de `launchd` |
+| `deploy/local/deploy.sh` | El deploy en sí. Lo corre el workflow, pero también lo puedes correr a mano |
+| `deploy/local/start.sh` | Lo que ejecuta `launchd`: carga `prod.env` y arranca `current/bin/server` |
+| `deploy/local/com.user_roles_demo.plist` | Plantilla del servicio de `launchd` |
+| `deploy/local/prod.env.example` | Plantilla de variables de entorno; el archivo real vive fuera del repo |
+
+> ⚠️ **Seguridad: repo público + self-hosted runner.** En un repo público, cualquiera puede abrir un PR desde un fork que modifique el workflow para que corra en *tu* runner, es decir, código ajeno ejecutándose en tu Mac. Antes de registrar el runner, haz una de estas dos cosas:
+> - Haz el repo **privado** (lo más simple), o
+> - En *Settings → Actions → General → Fork pull request workflows*, activa **Require approval for all external contributors** y nunca apruebes PRs de desconocidos.
+
+### 11.1 Generar los archivos de release
 
 ```bash
-# instala flyctl (arm64 nativo)
-arch -arm64 brew install flyctl
-fly auth login
-
-# genera Dockerfile + fly.toml (detecta que es Phoenix automáticamente)
-fly launch --no-deploy
+mix phx.gen.release
 ```
 
-Esto crea un Postgres gestionado y te da un `FLY_API_TOKEN` que debes guardar como **secret** del repo:
+Crea `lib/user_roles_demo/release.ex` (con `UserRolesDemo.Release.migrate/0`) y los scripts `rel/overlays/bin/server` y `rel/overlays/bin/migrate`, que se copian dentro del release.
+
+### 11.2 Preparar tu Mac (una sola vez)
+
+Requisitos: Postgres corriendo en `localhost` (Postgres.app o Homebrew) y Erlang/Elixir instalados con asdf (los mismos de `.tool-versions`).
 
 ```bash
-fly tokens create deploy -x 999999h | pbcopy
+deploy/local/install.sh
 ```
 
-En GitHub: Settings → Secrets and variables → Actions → New repository secret → `FLY_API_TOKEN` (pega lo copiado).
+Esto hace tres cosas:
 
-### 11.2 Workflow de despliegue
+1. Crea `~/.config/user_roles_demo/prod.env` (permisos `600`) con un `SECRET_KEY_BASE` recién generado. La app de prod escucha en `PORT=4001`, para no chocar con `mix phx.server` en el 4000.
+2. Crea la base de datos `user_roles_demo_prod`.
+3. Registra el servicio `com.user_roles_demo` en `launchd`. Arranca al iniciar sesión y se reinicia solo si se cae con error.
 
-**`.github/workflows/cd.yml`**
+Primer deploy manual, para comprobar que todo funciona antes de meter GitHub en medio:
 
-```yaml
-name: CD
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  deploy:
-    # solo despliega si el pipeline de CI en ese commit ya pasó
-    needs: []
-    runs-on: ubuntu-latest
-    concurrency: deploy-group
-    steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --remote-only
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+```bash
+deploy/local/deploy.sh
+open http://localhost:4001
 ```
 
-Para encadenarlo *después* de que CI pase (en vez de en paralelo), la forma simple es fusionar ambos en un solo workflow con dos jobs y `needs: test`:
+> **Tailwind en macOS arm64:** el binario de Tailwind 4.x que descarga `mix assets.setup` puede venir con una firma de código inválida, y macOS lo mata (`exited with 137`). `deploy.sh` lo detecta con `codesign -v` y lo re-firma ad hoc (`codesign --force --sign -`). Si te pasa en desarrollo, corre ese mismo comando sobre `_build/tailwind-*`.
+
+### 11.3 Registrar el self-hosted runner
+
+En GitHub: *Settings → Actions → Runners → New self-hosted runner → macOS / ARM64*. Sigue los comandos que te muestra (descargar y `./config.sh ...`). Cuando pregunte por **labels adicionales**, agrega:
+
+```
+user-roles-local
+```
+
+El workflow pide `[self-hosted, macOS, ARM64, user-roles-local]`. Ese label propio asegura que el deploy caiga en *esta* Mac y no en otro runner que registres después.
+
+Para que el runner arranque solo con tu sesión, instálalo como servicio desde la carpeta del runner:
+
+```bash
+./svc.sh install
+./svc.sh start
+```
+
+> El runner corre como **tu usuario**, así que el deploy puede usar `launchctl` sobre tu sesión gráfica (`gui/<uid>`). Por eso es un *LaunchAgent* (en `~/Library/LaunchAgents`) y no un *LaunchDaemon*.
+
+### 11.4 Workflow de despliegue
+
+Job adicional al final de **`.github/workflows/ci.yml`**:
 
 ```yaml
-# dentro de ci.yml, como job adicional al final del archivo
+  # CD local: corre en el self-hosted runner de tu Mac (ver deploy/local/ y la
+  # sección 11 de la guía). Solo en push a main y solo si `test` pasó.
   deploy:
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    concurrency: deploy-group
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, ARM64, user-roles-local]
+    # un deploy a la vez; si llega otro push, espera en vez de cancelar
+    concurrency:
+      group: deploy-local
+      cancel-in-progress: false
+
     steps:
       - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --remote-only
+
+      # el runner no carga tu shell (.zshrc): agrega a mano asdf y Homebrew
+      - name: Herramientas en PATH
+        run: |
+          echo "$HOME/.asdf/shims" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+
+      - name: Desplegar release
+        run: deploy/local/deploy.sh
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          RELEASE_SHA: ${{ github.sha }}
 ```
 
-Con esto: cada push a `main` corre tests → si pasan, despliega automáticamente. Cada PR solo corre tests (no despliega, por la condición `github.ref`).
+Con esto, cada push a `main` corre los tests y, si pasan, despliega en tu Mac. Los pushes a `feat/**` y los PRs solo corren los tests, por la condición del `if`.
+
+Qué hace `deploy.sh`, en orden:
+
+1. Carga `~/.config/user_roles_demo/prod.env`.
+2. `mix deps.get --only prod`, `mix compile`, `mix assets.setup` y `mix assets.deploy` con `MIX_ENV=prod`.
+3. `mix release --path ~/apps/user_roles_demo/releases/<sha>`. El release queda fuera del checkout del runner, que se limpia en cada job.
+4. `bin/migrate` del release nuevo, **antes** de activarlo. Si una migración falla, la versión anterior sigue arriba.
+5. Mueve el symlink `current` al release nuevo y reinicia con `launchctl kickstart -k`.
+6. Espera hasta 30 s a que `http://localhost:4001/` responda. Si no responde, el job falla.
+7. Conserva los últimos 5 releases (`KEEP_RELEASES`) y borra los más viejos.
+
+### 11.5 Operación del día a día
 
 ```bash
-git add .github/workflows/ci.yml fly.toml Dockerfile
-git commit -m "cd: despliegue automático a Fly.io tras pasar CI"
+# estado del servicio
+launchctl print gui/$(id -u)/com.user_roles_demo | grep -E "state|pid"
+
+# logs
+tail -f ~/apps/user_roles_demo/log/stdout.log ~/apps/user_roles_demo/log/stderr.log
+
+# reiniciar / detener
+launchctl kickstart -k gui/$(id -u)/com.user_roles_demo
+launchctl bootout gui/$(id -u)/com.user_roles_demo
+
+# consola IEx conectada a la app en vivo
+~/apps/user_roles_demo/current/bin/user_roles_demo remote
+```
+
+**Rollback** al release anterior (las migraciones no se revierten solas; si el release nuevo trajo una, evalúa si hace falta un `rollback` de Ecto):
+
+```bash
+cd ~/apps/user_roles_demo
+ls -1t releases/                       # el primero es el actual
+ln -sfn "$PWD/releases/<sha-anterior>" current
+launchctl kickstart -k gui/$(id -u)/com.user_roles_demo
+```
+
+```bash
+git add .github/workflows/ci.yml deploy/ rel/ lib/user_roles_demo/release.ex
+git commit -m "cd: despliegue local con self-hosted runner + mix release"
 git push
 ```
 
@@ -2209,7 +2289,7 @@ git push
 ## 12. Siguientes pasos opcionales
 
 - Autorización basada en `role.name` (ej. `"admin"`, `"editor"`): añade un plug que valide `Enum.any?(conn.assigns.current_user.roles, & &1.name == "admin")` y úsalo en los pipelines que lo necesiten (reutiliza `conn.assigns.current_user`, ya lo puebla `UserRolesDemoWeb.UserAuth` del paso 6).
-- Si prefieres un scaffold más completo que el auth manual del paso 6 (confirmación de email, reseteo de password, "recuérdame", rate limiting) considera `mix phx.gen.auth` — ver 11.1 más abajo, porque en **este** proyecto no es un simple "correr el comando": colisiona con el `Accounts.User` que ya existe.
+- Si prefieres un scaffold más completo que el auth manual del paso 6 (confirmación de email, reseteo de password, "recuérdame", rate limiting) considera `mix phx.gen.auth` — ver 12.1 más abajo, porque en **este** proyecto no es un simple "correr el comando": colisiona con el `Accounts.User` que ya existe.
 - Revocar tokens antes de que expiren: como son firmados (stateless) no hay tabla que borrar; si necesitas invalidación inmediata (ej. tras cambio de password), cambia `@token_salt` por usuario (ej. incluye un campo `token_version` en `User` y fírmalo como parte del salt) o migra a una tabla de tokens con `Repo.delete`.
 - Filtro en la UI de Roles para ver también los inactivos (`Accounts.list_roles(include_inactive: true)`) con un toggle.
 - Tests: `mix test`, y para el LiveView de usuarios, dos procesos de test simulando dos pestañas para verificar el broadcast.
